@@ -1,0 +1,15 @@
+gvxr
+numpy
+matplotlib
+tifffile
+trimesh
+pycollada
+pillow
+scikit-image
+scipy
+h5py
+pyyaml
+xraylib
+pybind11
+jupyter
+ipykernel
