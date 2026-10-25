@@ -295,11 +295,14 @@ def demo_objects() -> list[ObjectCfg]:
 
     dragon = os.path.join(os.path.dirname(gvxr.__file__), "welsh-dragon-small.stl")
     ball = os.path.join(tempfile.gettempdir(), "demo_ball.stl")
+    ball_radius_mm = 12.0
+    dragon_mesh = trimesh.load(dragon, force="mesh", process=False)
+    ball_offset_y_mm = float(dragon_mesh.extents[1] / 2.0 + ball_radius_mm + 5.0)
     if not os.path.exists(ball):
-        trimesh.creation.icosphere(subdivisions=3, radius=12.0).export(ball)
+        trimesh.creation.icosphere(subdivisions=3, radius=ball_radius_mm).export(ball)
     return [
         ObjectCfg("Dragon", dragon, "Compound", "H2O", 1.0, (0, 0, 0)),
-        ObjectCfg("Ball", ball, "Element", "Al", 2.70, (0, 25, 0)),
+        ObjectCfg("Ball", ball, "Element", "Al", 2.70, (0, ball_offset_y_mm, 0)),
     ]
 
 
