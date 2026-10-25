@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gVXR CT Simulator</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#667085; --line:#d9dee7;
+          --accent:#1f6feb; --accent-ink:#fff; --bad:#b42318; --warn:#b54708; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12161c; --card:#1b212b; --ink:#e6eaf0; --muted:#98a2b3; --line:#2c3543;
+            --accent:#4c8dff; --accent-ink:#0b1220; --bad:#ff8a80; --warn:#fdb022; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:18px 24px 0; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  header p { margin:0; color:var(--muted); }
+  main { display:grid; grid-template-columns:minmax(300px,420px) 1fr; gap:18px; padding:18px 24px 40px; }
+  @media (max-width:860px) { main { grid-template-columns:1fr; padding:16px; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  fieldset { border:0; padding:0; margin:0 0 14px; }
+  legend { font-weight:600; margin-bottom:8px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:8px; flex:1; min-width:0; }
+  input, select { width:100%; margin-top:3px; padding:7px 8px; font:inherit; color:var(--ink);
+                  background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+  input[type=checkbox] { width:auto; margin:0 6px 0 0; vertical-align:middle; }
+  label.check { display:flex; align-items:center; color:var(--ink); font-size:14px; }
+  .row { display:flex; gap:10px; }
+  .hint { font-size:12px; color:var(--muted); margin:-2px 0 8px; }
+  details { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+  summary { cursor:pointer; font-weight:600; }
+  .buttons { display:flex; gap:10px; margin-top:6px; }
+  button { font:inherit; padding:9px 14px; border-radius:8px; border:1px solid var(--line);
+           background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.55; cursor:not-allowed; }
+  #bar { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin:8px 0 6px; }
+  #bar > div { height:100%; width:0; background:var(--accent); transition:width .25s; }
+  #status { font-size:14px; color:var(--muted); min-height:20px; }
+  #status.error { color:var(--bad); font-weight:600; white-space:pre-wrap; }
+  .tabs { display:flex; gap:6px; margin:12px 0 8px; }
+  .tabs button.on { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .pane { display:none; } .pane.on { display:block; }
+  .pane img { width:100%; image-rendering:pixelated; background:#000; border-radius:8px;
+              border:1px solid var(--line); min-height:60px; }
+  #sliderWrap { display:none; margin-top:10px; }
+  #sliderWrap input { padding:0; }
+  .cap { font-size:12px; color:var(--muted); margin-top:4px; }
+  a.dl { display:none; margin-top:12px; margin-right:8px; }
+  .orient { border-top:1px dashed var(--line); margin-top:6px; padding-top:8px; font-size:13px; }
+  .presets { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
+  .presets button { padding:4px 8px; font-size:12px; border-radius:6px; }
+  .right { display:flex; flex-direction:column; gap:18px; min-width:0; }
+  .card h2 { margin:0 0 6px; font-size:17px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-top:12px; }
+  .grid figure { margin:0; }
+  .grid img { width:100%; image-rendering:pixelated; background:#000; border-radius:6px;
+              border:1px solid var(--line); display:block; }
+  .grid figcaption { font-size:11px; color:var(--muted); margin-top:3px; word-break:break-word; }
+  #gen-results { display:none; }
+  #gen-count.bad { color:var(--bad); font-weight:600; }
+  #gen-count.warn { color:var(--warn); font-weight:600; }
+  .gen-row { align-items:flex-end; }
+  .gen-row .rm { flex:none; margin-bottom:8px; padding:7px 11px; line-height:1; }
+  .rowno { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>gVXR CT Simulator</h1>
+  <p>Load STL, OBJ, PLY, or DAE parts, set materials, configure the scanner, then simulate a projection, a full CT scan, or a whole set of datasets with controlled variations.</p>
+</header>
+<main>
+  <form id="form" class="card" onsubmit="return false">
+    <fieldset>
+      <label class="check"><input type="checkbox" name="demo">
+        Use built-in demo (water dragon + aluminium ball)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Objects</legend>
+      <div class="row">
+        <label>Mesh units <select name="unit"><option>mm</option><option>cm</option>
+          <option>um</option><option>m</option></select></label>
+      </div>
+      <label class="check"><input type="checkbox" name="center" checked>
+        Centre each mesh at the origin</label>
+      <div class="hint">Untick if the parts of one assembly share a single coordinate frame.</div>
+      <div id="object-slots">__SLOTS__</div>
+      <div class="buttons"><button type="button" id="btnAddObject" onclick="addObjectSlot()">+ Add object</button></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>X-ray source</legend>
+      <label>Beam <select name="beam"><option>Cone</option><option>Parallel</option></select></label>
+      <div class="row">
+        <label>Source to rotation axis, SOD (cm) <input name="src" type="number" step="any" value="40"></label>
+        <label>Detector to rotation axis (cm) <input name="det" type="number" step="any" value="10"></label>
+      </div>
+      <div class="hint" id="geom"></div>
+      <div class="row">
+        <label>Energy (keV, monochromatic) <input name="energy" type="number" step="any" value="80"></label>
+        <label>Photons per ray (also sets the noise level) <input name="photons" type="number" step="1" value="1000"></label>
+      </div>
+      <div class="row">
+        <label>Beam spectrum <select name="spectrum">
+          <option value="mono">Monochromatic (energy above)</option>
+          <option value="poly">Polychromatic (tube voltage)</option></select></label>
+        <label>Tube voltage (kVp) <input name="kvp" type="number" step="any" value="120"></label>
+      </div>
+      <div class="hint">Polychromatic uses a simple approximate tube spectrum and adds beam hardening
+        (cupping). It ignores the energy field.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Detector</legend>
+      <div class="row">
+        <label>Pixels (width) <input name="nx" type="number" step="1" value="320"></label>
+        <label>Pixels (height) <input name="ny" type="number" step="1" value="160"></label>
+        <label>Pixel size (mm) <input name="px" type="number" step="any" value="1"></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Scan</legend>
+      <div class="row">
+        <label>Number of angles <input name="n_angles" type="number" step="1" value="90"></label>
+        <label>Total rotation (deg) <input name="total" type="number" step="any" value="360"></label>
+      </div>
+      <label>Angle for single projection (deg) <input name="angle" type="number" step="any" value="0"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Realistic imaging effects</legend>
+      <label>Preset <select id="fxpreset" onchange="applyFxPreset(this.value)">
+        <option value="custom">Custom (edit the values below)</option>
+        <option value="none">None (ideal detector)</option>
+        <option value="mild">Mild</option>
+        <option value="typical">Typical micro-CT</option>
+        <option value="harsh">Harsh / low dose</option></select></label>
+      <div class="row">
+        <label class="check"><input type="checkbox" name="noise">Add photon (Poisson) noise</label>
+        <label>Random seed <input name="seed" type="number" step="1" value="0"></label>
+      </div>
+      <div class="row">
+        <label>Detector blur (px) <input name="blur" type="number" step="any" min="0" value="0"></label>
+        <label>Scatter (% of beam) <input name="scatter" type="number" step="any" min="0" value="0"></label>
+      </div>
+      <div class="row">
+        <label>Gain variation (%) <input name="gain" type="number" step="any" min="0" value="0"></label>
+        <label>Flat-field mismatch (%) <input name="mismatch" type="number" step="any" min="0" value="0"></label>
+      </div>
+      <div class="row">
+        <label>Read noise (counts) <input name="readnoise" type="number" step="any" min="0" value="0"></label>
+        <label>Flat frames averaged <input name="flat_frames" type="number" step="1" min="1" value="1"></label>
+        <label>Dark offset (counts) <input name="dark" type="number" step="any" min="0" value="0"></label>
+      </div>
+      <div class="hint">Noise strength follows &ldquo;Photons per ray&rdquo; (fewer photons = noisier).
+        Flat-field mismatch gives ring artefacts in reconstructions. Scatter is a smooth
+        approximation, gVXR does not simulate it.</div>
+    </fieldset>
+
+    <div class="buttons">
+      <button type="button" id="btnSingle" onclick="run('single')">Single projection</button>
+      <button type="button" id="btnScan" class="primary" onclick="run('scan')">Run CT scan</button>
+    </div>
+  </form>
+
+  <div class="right">
+  <section class="card">
+    <div id="bar"><div></div></div>
+    <div id="status">Ready.</div>
+
+    <div class="tabs">
+      <button type="button" class="on" data-pane="proj">Projection</button>
+      <button type="button" data-pane="sino">Sinogram</button>
+      <button type="button" data-pane="rec">Quick reconstruction</button>
+    </div>
+
+    <div class="pane on" id="pane-proj">
+      <img id="img-proj" alt="Projection will appear here">
+      <div class="cap">Attenuation image (bright = more absorbing).</div>
+      <div id="sliderWrap">
+        <input type="range" id="slider" min="0" max="0" value="0">
+        <div class="cap" id="sliderCap"></div>
+      </div>
+    </div>
+    <div class="pane" id="pane-sino">
+      <img id="img-sino" alt="Sinogram will appear after a CT scan">
+      <div class="cap">Sinogram of the middle detector row (angle on the vertical axis).</div>
+    </div>
+    <div class="pane" id="pane-rec">
+      <img id="img-rec" alt="Reconstruction will appear after a CT scan">
+      <div class="cap">Filtered back-projection of the middle row. Parallel-beam approximation, quick check only.</div>
+    </div>
+
+    <a class="dl" id="dl" href="#">Download CT scan data (.zip)</a>
+    <a class="dl" id="dl-sino" href="#">Download sinogram data (.zip)</a>
+  </section>
+
+  <section class="card" id="genCard">
+    <h2>Dataset generator: controlled variations</h2>
+    <div class="hint">Uses the objects, source, detector, scan and effects settings from the form on the
+      left as the base scan, then changes the parameters you choose. Every combination is saved as a
+      reconstruction-ready dataset, and all of them are bundled in one zip with a manifest.
+      Material variations bundle material type, material name/formula, and density into one choice.</div>
+    <label>Variation mode <select id="gen-mode">
+      <option value="ofat">One factor at a time (each parameter varied alone)</option>
+      <option value="grid">All combinations (grid)</option></select></label>
+    <div id="gen-rows"></div>
+    <div class="buttons" style="margin:0 0 10px">
+      <button type="button" id="btnAddParam" onclick="addGenRow()">+ Add parameter</button>
+    </div>
+    <label class="check"><input type="checkbox" id="gen-baseline" checked>
+      Include the unchanged base scan</label>
+    <label class="check"><input type="checkbox" id="gen-clean" checked>
+      Also save a clean copy (no imaging effects) of every dataset, for clean / noisy pairs</label>
+    <div class="hint" id="gen-count"></div>
+    <div class="buttons"><button type="button" class="primary" id="btnGen" onclick="runBatch()">Generate datasets</button></div>
+    <div id="gen-results">
+      <div class="grid" id="gen-grid"></div>
+      <a class="dl" id="dl-batch" href="#">Download all datasets (.zip)</a>
+      <a class="dl" id="dl-manifest" href="#">Download manifest (.csv)</a>
+    </div>
+  </section>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// Show the geometry derived from the source and detector positions.
+function updateGeom() {
+  const v = n => parseFloat(document.querySelector('[name="' + n + '"]').value);
+  const src = v("src"), det = v("det"), nx = v("nx"), ny = v("ny"), px = v("px");
+  const beam = document.querySelector('[name="beam"]').value;
+  const box = $("#geom");
+  if (!(src > 0) || !(det >= 0) || !(nx > 0) || !(ny > 0) || !(px > 0)) { box.textContent = ""; return; }
+  const sdd = src + det;
+  const mag = beam === "Parallel" ? 1 : sdd / src;
+  const fw = nx * px / mag, fh = ny * px / mag;
+  box.textContent = "Source to detector, SDD = " + sdd.toFixed(1) + " cm  |  Magnification = " +
+    mag.toFixed(2) + "x  |  Field of view at the axis = " + fw.toFixed(0) + " x " + fh.toFixed(0) +
+    " mm (the object must fit inside this and stay within " + Math.min(src, det).toFixed(1) +
+    " cm of the axis)";
+}
+["src", "det", "nx", "ny", "px", "beam"].forEach(n =>
+  document.querySelector('[name="' + n + '"]').addEventListener("input", updateGeom));
+updateGeom();
+let job = null, totalDeg = 360, nAngles = 0, sliderTimer = null;
+let genBusy = false, genValid = false;
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + b.dataset.pane));
+});
+
+function setRot(i, x, y, z) {
+  const f = $("#form");
+  f.elements["rx" + i].value = x; f.elements["ry" + i].value = y; f.elements["rz" + i].value = z;
+}
+function setBusy(busy) {
+  $("#btnSingle").disabled = busy; $("#btnScan").disabled = busy;
+  genBusy = busy; refreshGenBtn();
+}
+function setStatus(msg, isError) {
+  const s = $("#status"); s.textContent = msg; s.className = isError ? "error" : "";
+}
+function setBar(p) { $("#bar > div").style.width = Math.round(p * 100) + "%"; }
+function setResultImage(img, url, label) {
+  img.onerror = async () => {
+    try {
+      const response = await fetch(url, {cache: "no-store"});
+      if (!response.ok) {
+        const body = (await response.text()).slice(0, 240);
+        setStatus(`${label} image failed: HTTP ${response.status} ${body}`, true);
+      } else {
+        const blob = await response.blob();
+        setStatus(`${label} image failed to decode: HTTP ${response.status}, ${response.headers.get("content-type")}, ${blob.size} bytes`, true);
+      }
+    } catch (error) {
+      setStatus(`${label} image request failed: ${error}`, true);
+    }
+  };
+  img.src = url;
+}
+
+async function run(mode) {
+  const fd = new FormData($("#form"));
+  fd.set("mode", mode);
+  await start(fd);
+}
+
+async function start(fd) {
+  setBusy(true); setBar(0); setStatus("Uploading and starting...");
+  let j;
+  try {
+    const r = await fetch("/api/run", { method: "POST", body: fd });
+    j = await r.json();
+    if (!r.ok) { setStatus(j.error || "Request failed.", true); setBusy(false); return; }
+  } catch (e) { setStatus("Could not reach the server: " + e, true); setBusy(false); return; }
+  job = j.job; poll();
+}
+
+async function poll() {
+  let s;
+  try { s = await (await fetch("/api/status/" + job)).json(); }
+  catch (e) { setStatus("Lost connection to the server.", true); setBusy(false); return; }
+  setBar(s.progress);
+  if (s.status === "running") { setStatus(s.message); setTimeout(poll, 500); return; }
+  setBusy(false);
+  if (s.status === "error") { setStatus(s.error, true); return; }
+  setStatus(s.message); setBar(1);
+  if (s.kind === "batch") { await showBatch(s); return; }
+  const t = Date.now();
+  setResultImage($("#img-proj"), "/api/image/" + job + "/proj.png?t=" + t, "Projection");
+  if (s.kinds.includes("sino")) {
+    setResultImage($("#img-sino"), "/api/image/" + job + "/sino.png?t=" + t, "Sinogram");
+    setResultImage($("#img-rec"), "/api/image/" + job + "/rec.png?t=" + t, "Reconstruction");
+  }
+  nAngles = s.n; totalDeg = s.total_deg;
+  const wrap = $("#sliderWrap");
+  if (s.n > 1) {
+    wrap.style.display = "block";
+    const sl = $("#slider"); sl.max = s.n - 1; sl.value = 0; updateCap(0);
+  } else { wrap.style.display = "none"; }
+  const dl = $("#dl");
+  if (s.has_zip) { dl.href = "/api/download/" + job; dl.style.display = "inline-block"; }
+  else { dl.style.display = "none"; }
+  const dls = $("#dl-sino");
+  if (s.has_sino_zip) { dls.href = "/api/download_sinogram/" + job; dls.style.display = "inline-block"; }
+  else { dls.style.display = "none"; }
+}
+
+function updateCap(i) {
+  $("#sliderCap").textContent = "Projection " + (+i + 1) + " of " + nAngles +
+    "  (" + (i * totalDeg / nAngles).toFixed(1) + " deg)";
+}
+$("#slider").addEventListener("input", e => {
+  const i = e.target.value; updateCap(i);
+  clearTimeout(sliderTimer);
+  sliderTimer = setTimeout(() => {
+    const url = "/api/projection/" + job + "/" + i + ".png?t=" + Date.now();
+    setResultImage($("#img-proj"), url, "Projection");
+  }, 60);
+});
+// ---------------------------------------------------------------------------
+// Realistic-effects presets
+// ---------------------------------------------------------------------------
+const FX_FIELDS = ["blur", "scatter", "gain", "mismatch", "readnoise", "dark"];
+const FX_PRESETS = {
+  none:    {noise: false, blur: 0,   scatter: 0, gain: 0, mismatch: 0,   readnoise: 0,  dark: 0},
+  mild:    {noise: true,  blur: 0.5, scatter: 0, gain: 1, mismatch: 0,   readnoise: 5,  dark: 50},
+  typical: {noise: true,  blur: 0.8, scatter: 3, gain: 2, mismatch: 0.3, readnoise: 10, dark: 100},
+  harsh:   {noise: true,  blur: 1.2, scatter: 8, gain: 3, mismatch: 0.8, readnoise: 20, dark: 150},
+};
+function applyFxPreset(name) {
+  const p = FX_PRESETS[name]; if (!p) return;
+  const f = $("#form").elements;
+  f["noise"].checked = p.noise;
+  FX_FIELDS.forEach(k => { f[k].value = p[k]; });
+  updateGenCount();
+}
+
+// ---------------------------------------------------------------------------
+// Dataset generator (controlled variations)
+// ---------------------------------------------------------------------------
+const GEN_GROUPS = [
+  ["Beam and geometry (re-runs gVXR)", [
+    ["energy_kev", "Energy (keV, monochromatic)"], ["kvp", "Tube voltage (kVp, polychromatic)"],
+    ["source_x_cm", "Source to axis (cm)"], ["detector_x_cm", "Detector to axis (cm)"],
+    ["n_angles", "Number of angles"], ["pixel_mm", "Pixel size (mm)"]]],
+  ["Imaging effects (fast, no gVXR re-run)", [
+    ["fx.photons", "Photons per pixel (noise level)"], ["fx.psf_sigma_px", "Detector blur (px)"],
+    ["fx.scatter_frac", "Scatter (% of beam)"], ["fx.gain_sigma", "Gain variation (%)"],
+    ["fx.flat_mismatch_sigma", "Flat-field mismatch (%)"], ["fx.read_noise", "Read noise (counts)"],
+    ["fx.dark_offset", "Dark offset (counts)"]]],
+];
+function refreshObjectVariationGroups() {
+  GEN_GROUPS.splice(2);
+  const demo = $("#form").elements["demo"].checked;
+  const count = demo ? 2 : [...document.querySelectorAll("#object-slots input[type=file]")]
+    .filter(input => input.files && input.files.length).length;
+  for (let i = 0; i < count; i++) {
+    GEN_GROUPS.push(["Object " + (i + 1) + " (re-runs gVXR)", [
+      ["obj" + i + ".material_spec", "Material (type, name/formula, density)"],
+      ["obj" + i + ".offset_x", "Offset x (mm)"], ["obj" + i + ".offset_y", "Offset y (mm)"],
+      ["obj" + i + ".offset_z", "Offset z (mm)"], ["obj" + i + ".rotate_x", "Rotate x (deg)"],
+      ["obj" + i + ".rotate_y", "Rotate y (deg)"], ["obj" + i + ".rotate_z", "Rotate z (deg)"]]]);
+  }
+  document.querySelectorAll(".gen-key").forEach(sel => {
+    const selected = sel.value;
+    sel.querySelectorAll("optgroup").forEach(g => g.remove());
+    GEN_GROUPS.forEach(g => {
+      const og=document.createElement("optgroup"); og.label=g[0];
+      g[1].forEach(p => { const o=document.createElement("option"); o.value=p[0]; o.textContent=p[1]; og.append(o); });
+      sel.append(og);
+    });
+    if ([...sel.options].some(o => o.value === selected)) sel.value=selected;
+    else sel.value="";
+  });
+  syncGenRows(); updateGenCount();
+}
+
+let nextObjectIndex = 2;
+function addObjectSlot() {
+  const index = nextObjectIndex++;
+  const html = document.getElementById("object-template").innerHTML.replaceAll("__INDEX__", String(index));
+  document.getElementById("object-slots").insertAdjacentHTML("beforeend", html);
+  refreshObjectVariationGroups();
+}
+const GEN_HINTS = {
+  energy_kev: "e.g. 40, 80, 120", kvp: "e.g. 60, 90, 120", source_x_cm: "e.g. 30, 40, 60",
+  detector_x_cm: "e.g. 10, 15, 20", n_angles: "e.g. 45, 90, 180", pixel_mm: "e.g. 0.5, 1, 2",
+  "fx.photons": "e.g. 500, 2000, 10000", "fx.psf_sigma_px": "e.g. 0, 0.8, 1.5",
+  "fx.scatter_frac": "e.g. 0, 3, 8", "fx.gain_sigma": "e.g. 0, 2, 4",
+  "fx.flat_mismatch_sigma": "e.g. 0, 0.3, 0.8", "fx.read_noise": "e.g. 0, 10, 20",
+  "fx.dark_offset": "e.g. 0, 100, 200",
+};
+function hintFor(key) {
+  if (GEN_HINTS[key]) return GEN_HINTS[key];
+  if (key.endsWith(".material_spec")) return "e.g. Element|Al|2.70, Compound|H2O|1.0";
+  if (key.endsWith(".density")) return "e.g. 1.0, 2.7, 7.8";
+  if (key.endsWith(".material")) return "e.g. Al, Fe, Ti";
+  return "e.g. 0, 10, 20";
+}
+
+let genRowCount = 0;
+const GEN_WARN_PARAMS = 8;
+
+function addGenRow() {
+  const box = $("#gen-rows");
+  genRowCount += 1;
+  const row = document.createElement("div"); row.className = "row gen-row";
+  const l1 = document.createElement("label");
+  const tag = document.createElement("span"); tag.className = "rowno";
+  const sel = document.createElement("select"); sel.className = "gen-key";
+  const none = document.createElement("option"); none.value = ""; none.textContent = "(not used)";
+  sel.append(none);
+  GEN_GROUPS.forEach(g => {
+    const og = document.createElement("optgroup"); og.label = g[0];
+    g[1].forEach(p => {
+      const o = document.createElement("option"); o.value = p[0]; o.textContent = p[1]; og.append(o);
+    });
+    sel.append(og);
+  });
+  l1.append(tag, sel);
+  const l2 = document.createElement("label"); l2.append(document.createTextNode("Values (comma separated)"));
+  const inp = document.createElement("input"); inp.className = "gen-vals";
+  inp.placeholder = "choose a parameter first";
+  l2.append(inp);
+  const rm = document.createElement("button"); rm.type = "button"; rm.className = "rm";
+  rm.textContent = "\u00d7"; rm.title = "Remove this parameter";
+  rm.onclick = () => { row.remove(); syncGenRows(); updateGenCount(); };
+  sel.addEventListener("change", () => {
+    inp.placeholder = sel.value ? hintFor(sel.value) : "choose a parameter first";
+    syncGenRows();
+  });
+  row.append(l1, l2, rm); box.append(row);
+  syncGenRows();
+}
+
+// Keep row numbers current and prevent duplicate parameter choices.
+function syncGenRows() {
+  const rows = [...document.querySelectorAll("#gen-rows .gen-row")];
+  const chosen = rows.map(r => r.querySelector(".gen-key").value);
+  rows.forEach((r, i) => {
+    r.querySelector(".rowno").textContent = "Parameter " + (i + 1);
+    r.querySelector(".gen-key").querySelectorAll("option").forEach(o => {
+      o.disabled = o.value !== "" && chosen.some((c, j) => j !== i && c === o.value);
+    });
+  });
+  $("#btnAddParam").disabled = false;
+}
+
+function genSpec() {
+  const params = [];
+  document.querySelectorAll("#gen-rows .gen-row").forEach(r => {
+    const key = r.querySelector(".gen-key").value;
+    const values = r.querySelector(".gen-vals").value.split(",").map(s => s.trim()).filter(Boolean);
+    if (key && values.length) params.push({key: key, values: values});
+  });
+  return {mode: $("#gen-mode").value, params: params,
+          baseline: $("#gen-baseline").checked, clean_copy: $("#gen-clean").checked};
+}
+
+function effectsOn() {
+  const f = $("#form").elements;
+  return f["noise"].checked || FX_FIELDS.some(n => parseFloat(f[n].value) > 0);
+}
+
+const GEN_WARN_DATASETS = 20;  // soft warning
+const GEN_WARN_MB = 1000;
+function refreshGenBtn() { $("#btnGen").disabled = genBusy || !genValid; }
+
+function updateGenCount() {
+  const spec = genSpec(), box = $("#gen-count");
+  box.className = "hint";
+  if (!spec.params.length) {
+    box.textContent = "Choose at least one parameter and give its values.";
+    genValid = false; refreshGenBtn(); return;
+  }
+  const lens = spec.params.map(p => p.values.length);
+  const physics = spec.params.filter(p => !p.key.startsWith("fx."));
+  const anyFx = spec.params.some(p => p.key.startsWith("fx."));
+  let runs, scans;
+  if (spec.mode === "grid") {
+    runs = lens.reduce((a, b) => a * b, 1);
+    scans = physics.reduce((a, p) => a * p.values.length, 1) + (spec.baseline && physics.length ? 1 : 0);
+  } else {
+    runs = lens.reduce((a, b) => a + b, 0);
+    scans = physics.reduce((a, p) => a + p.values.length, 0) + ((spec.baseline || anyFx) ? 1 : 0);
+  }
+  if (spec.baseline) runs += 1;
+  const variants = (spec.clean_copy && (effectsOn() || anyFx)) ? 2 : 1;
+  const datasets = runs * variants;
+  const f = $("#form").elements;
+  const mb = datasets * (parseFloat(f["n_angles"].value) || 0) * (parseFloat(f["nx"].value) || 0) *
+             (parseFloat(f["ny"].value) || 0) * 8 / 1e6;
+  const base = "About " + datasets + " dataset" + (datasets === 1 ? "" : "s") + " from " + scans +
+               " gVXR scan" + (scans === 1 ? "" : "s") + ", roughly " + mb.toFixed(0) + " MB before zipping.";
+  genValid = true;
+  const parameterWarning = spec.params.length > GEN_WARN_PARAMS
+    ? " You have " + spec.params.length + " variation parameters; large parameter sets can make setup and result tracking harder."
+    : "";
+  if (datasets > GEN_WARN_DATASETS || mb > GEN_WARN_MB || parameterWarning) {
+    box.textContent = "Large run warning: " + base + " This run is allowed, but may take a long time and use substantial memory or disk space." + parameterWarning;
+    box.className = "hint warn";
+  } else {
+    box.textContent = base;
+  }
+  refreshGenBtn();
+}
+
+async function runBatch() {
+  const spec = genSpec();
+  if (!spec.params.length) { setStatus("Choose at least one parameter to vary.", true); return; }
+  const fd = new FormData($("#form"));
+  fd.set("mode", "batch");
+  fd.set("sweep", JSON.stringify(spec));
+  await start(fd);
+}
+
+async function showBatch(s) {
+  $("#dl").style.display = "none"; $("#dl-sino").style.display = "none";
+  let rows = [];
+  try { rows = await (await fetch("/api/batch/" + job)).json(); } catch (e) { rows = []; }
+  const grid = $("#gen-grid"); grid.innerHTML = "";
+  rows.forEach(r => {
+    const fig = document.createElement("figure");
+    const img = document.createElement("img"); img.src = "/api/thumb/" + job + "/" + r.id + ".png";
+    img.alt = r.variation;
+    const cap = document.createElement("figcaption");
+    cap.textContent = "#" + r.id + " " + r.variation + " (" + r.effects + ")";
+    fig.append(img, cap); grid.append(fig);
+  });
+  const zip = $("#dl-batch"), man = $("#dl-manifest");
+  if (s.has_batch_zip) {
+    zip.href = "/api/download_batch/" + job; zip.style.display = "inline-block";
+    man.href = "/api/manifest/" + job; man.style.display = "inline-block";
+  }
+  $("#gen-results").style.display = "block";
+  $("#genCard").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+addGenRow();
+refreshObjectVariationGroups();
+["input", "change"].forEach(ev => {
+  $("#genCard").addEventListener(ev, updateGenCount);
+  $("#form").addEventListener(ev, updateGenCount);
+});
+updateGenCount();
+$("#form").elements["demo"].addEventListener("change", () => {
+  const demo = $("#form").elements["demo"].checked;
+  $("#object-slots").style.opacity = demo ? "0.5" : "1";
+  $("#btnAddObject").disabled = demo;
+  refreshObjectVariationGroups();
+});
+$("#object-slots").addEventListener("change", e => {
+  if (e.target.matches('input[type="file"]')) refreshObjectVariationGroups();
+});
+</script>
+</body>
+</html>
