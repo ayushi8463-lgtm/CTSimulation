@@ -95,9 +95,7 @@ def _configure_renderer_selection():
 
     Linux EGL runtimes (including Colab) may have the NVIDIA driver installed
     without registering its EGL vendor JSON. Desktop Linux can use GLVND's
-    NVIDIA offload variables. Windows chooses the desktop OpenGL adapter via
-    its driver/OS policy, so this function reports that limitation instead of
-    pretending a Python environment variable can force it.
+    NVIDIA offload variables.
     """
     global _renderer_selection
     if _renderer_selection:
@@ -171,14 +169,6 @@ def _configure_renderer_selection():
                     if requested == "auto" else
                     "NVIDIA was requested, but its GLX library was not found; using the system desktop OpenGL choice."
                 )
-    elif sys.platform == "win32":
-        info["message"] = (
-            "Windows selects the desktop OpenGL adapter through OS/driver policy; "
-            "set this application to High performance in Windows Graphics settings if needed."
-            if requested != "nvidia" else
-            "NVIDIA was requested, but Windows selects desktop OpenGL adapters through OS/driver policy; "
-            "set this application to High performance in Windows Graphics settings."
-        )
     else:
         info["message"] = "No automatic GPU selection rule for this platform; using the system default."
 
@@ -201,9 +191,7 @@ def _capture_renderer_info():
     """Query the active context without adding a PyOpenGL dependency."""
     global _renderer_details
     try:
-        if sys.platform == "win32":
-            gl = ctypes.WinDLL("opengl32.dll")
-        elif sys.platform == "darwin":
+        if sys.platform == "darwin":
             gl = ctypes.CDLL("/System/Library/Frameworks/OpenGL.framework/OpenGL")
         else:
             gl = ctypes.CDLL(ctypes.util.find_library("GL") or "libGL.so.1")
@@ -219,9 +207,6 @@ def _capture_renderer_info():
             "version": query(0x1F02),
         }
         print(f"[gVXR] OpenGL context: {_renderer_details}")
-        renderer_name = (_renderer_details.get("renderer") or "").lower()
-        if any(name in renderer_name for name in ("llvmpipe", "softpipe", "swrast")):
-            print("[gVXR] WARNING: this is a software OpenGL renderer; GPU OpenGL acceleration is not active.")
     except Exception as exc:
         _renderer_details = {"diagnostic_error": str(exc)}
         print(f"[gVXR] OpenGL renderer query failed: {exc}")
@@ -289,20 +274,21 @@ def _set_material(gvxr, label: str, o: ObjectCfg):
 
 
 def demo_objects() -> list[ObjectCfg]:
-    """gVXR's sample dragon (water) plus an aluminium ball off the axis."""
+    """Return a watertight water block and an off-axis aluminium ball."""
     import trimesh
-    from gvxrPython3 import gvxr  # import only, no context needed
 
-    dragon = os.path.join(os.path.dirname(gvxr.__file__), "welsh-dragon-small.stl")
+    block = os.path.join(tempfile.gettempdir(), "demo_water_block.stl")
     ball = os.path.join(tempfile.gettempdir(), "demo_ball.stl")
     ball_radius_mm = 12.0
-    dragon_mesh = trimesh.load(dragon, force="mesh", process=False)
-    ball_offset_y_mm = float(dragon_mesh.extents[1] / 2.0 + ball_radius_mm + 5.0)
+    block_extents_mm = (60.0, 40.0, 30.0)
+    if not os.path.exists(block):
+        trimesh.creation.box(extents=block_extents_mm).export(block)
+    ball_offset_y_mm = float(block_extents_mm[1] / 2.0 + ball_radius_mm + 5.0)
     if not os.path.exists(ball):
         trimesh.creation.icosphere(subdivisions=3, radius=ball_radius_mm).export(ball)
     return [
-        ObjectCfg("Dragon", dragon, "Compound", "H2O", 1.0, (0, 0, 0)),
-        ObjectCfg("Ball", ball, "Element", "Al", 2.70, (0, ball_offset_y_mm, 0)),
+        ObjectCfg("Water block", block, "Compound", "H2O", 1.0, (0, 0, 0)),
+        ObjectCfg("Aluminium ball", ball, "Element", "Al", 2.70, (0, ball_offset_y_mm, 0)),
     ]
 
 
@@ -334,6 +320,8 @@ def configuration_warnings(cfg: ScanCfg) -> list[str]:
     bounds = []
     for obj in cfg.objects:
         mesh = _load_mesh(obj.stl_path)
+        # STL repeats vertices for each triangle; merge them before checking if the mesh is closed.
+        mesh.merge_vertices()
         if not mesh.is_watertight:
             warnings.append(
                 f"{obj.name} is an open mesh. The projection will still run; "

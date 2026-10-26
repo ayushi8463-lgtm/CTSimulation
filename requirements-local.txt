@@ -11,5 +11,6 @@ h5py
 pyyaml
 xraylib
 pybind11
+setuptools
 jupyter
 ipykernel

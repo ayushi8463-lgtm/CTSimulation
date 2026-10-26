@@ -1,77 +1,53 @@
-# gVXR CT Simulator: Local setup
+# Local Linux setup details
 
-## What the Local option does
+For a complete clean-install guide, use the [project README](../README.md).
+This page describes the local runtime behavior and environment controls.
 
-In Local mode, the C++ HTTP server listens on this computer. The browser opens
-`http://127.0.0.1:5000`, submits scan settings, and displays CT previews and
-download links. The C++ process parses requests, serves routes, and manages
-jobs. Python handles scan computation and gVXR through `simulator_engine.py`.
-There is no Flask dependency. Scan data is computed locally; the Local option
-does not use a Cloudflare tunnel or a Colab proxy.
+## Runtime
 
-The server listens on all network interfaces, so another device on the same
-network can open it using this computer's LAN address, for example
-`http://10.81.34.247:5000`.
+The C++ HTTP server listens on port 5000 by default. The browser opens
+`http://127.0.0.1:5000`, submits scan settings, and displays previews/downloads.
+Python handles computation and gVXR through `simulator_engine.py`. There is no
+Flask dependency, Cloudflare tunnel, or Colab proxy in Local mode.
 
-## What changed
+The launcher compiles `cpp_server.cpp` using the system C++ compiler and Python
+embed development headers, then runs the server. It uses `.venv/bin/python`
+when present, otherwise `python3`. The selected Python environment must have
+the packages in `requirements-local.txt`.
 
-- Added a `RUN_MODE` setting to the notebook. Choose `"local"` for Jupyter on
-  this computer or `"colab"` for Google Colab. Colab retains its Cloudflare and
-  Colab proxy options.
-- The C++ server embeds Python and runs independently of the notebook kernel.
-  A native graphics crash in the server therefore does not restart the Jupyter
-  kernel.
-- Local startup sets `CT_SIMULATOR_LOCAL=1`. `ct_core.py` uses that setting to
-  create gVXR's hidden desktop OpenGL context with `gvxr.createOpenGLContext()`.
-  This avoids the EGL device path that selected the AMD device and segfaulted
-  on this machine. Without the setting, headless Colab continues to use EGL.
-- The Python package list is recorded in `requirements-local.txt`, and the
-  project environment is `.venv` with the `Python (CT Simulator .venv)` kernel.
-
-## Run the server directly
-
-From the project root (the parent folder of `docs/`), run:
+The Linux setup helper builds the voxelizer as part of environment setup, in
+line with the Colab notebook's setup section. Single projections and full scans
+can run without it, while **Generate datasets** uses it to create
+ground-truth volumes. If you created the Python environment manually, build it
+with:
 
 ```bash
-./run_cpp_server.sh
+./.venv/bin/python build_voxel.py
 ```
 
-The script compiles `cpp_server.cpp` to `ct_simulator_server` and launches it
-on port 5000. It uses `.venv/bin/python` when available, or `python3`
-otherwise. The selected Python environment must have the packages in
-`requirements-local.txt`, and the system must provide `python3-config` plus
-Python development headers and libraries for the same Python version.
+Complete setup before launching the server so dataset generation is ready
+immediately.
 
-Open `http://127.0.0.1:5000` on this computer. Stop the server with
-**Ctrl+C** in the terminal. To select another port, pass it to the script,
-for example `./run_cpp_server.sh 5050`. Set `PYTHON_BIN` to use another Python
-interpreter.
+## Graphics environment
 
-The Colab notebook also builds and starts the C++ server. Both local and Colab
-web interfaces therefore use the same HTTP implementation.
+Local startup sets `CT_SIMULATOR_LOCAL=1`. `ct_core.py` uses
+`gvxr.createOpenGLContext()` for the desktop OpenGL context. Headless Colab
+continues to use its EGL context path. On first context creation, the Python
+engine reports the OpenGL vendor, renderer, and version.
 
-Use one server process at a time. If one is already running on port 5000, stop
-it before starting another. Server diagnostics appear in the terminal.
+`CT_SIMULATOR_GPU=auto` (default) requests NVIDIA when available;
+`nvidia` makes that request explicit; `system` leaves adapter selection to the
+system. The renderer reported by OpenGL is the indication of which device did
+the work.
 
-## Environment setup
-
-The `.venv` environment already has the packages from `requirements-local.txt`
-and the registered Jupyter kernel. To recreate it on this Ubuntu machine:
+## Direct launch
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -r requirements-local.txt
-./.venv/bin/python -m ipykernel install --prefix="$PWD/.venv" \
-  --name ct-simulator --display-name "Python (CT Simulator .venv)"
+./run_cpp_server.sh              # default port 5000
+./run_cpp_server.sh 5050         # choose a port
+CT_SIMULATOR_GPU=system ./run_cpp_server.sh
 ```
 
-The gVXR wheel also requires system graphics libraries and a working desktop
-OpenGL stack. The notebook's first setup section lists the Ubuntu packages.
-
-`ct_core.py` now requests NVIDIA GLX when its driver is installed, reports the
-actual OpenGL vendor/renderer at context creation, and warns when it detects a
-software renderer such as `llvmpipe`. `CT_SIMULATOR_GPU=auto` (the default)
-requests NVIDIA when available; `nvidia` makes that request explicit, and
-`system` leaves adapter choice to the system. The reported renderer, rather
-than the GPU being present, confirms which device performed projection
-rendering.
+Set `PYTHON_BIN` if using a Python interpreter other than the local `.venv`.
+The launcher needs `python3-config` and Python development files for a matching
+Python version.
