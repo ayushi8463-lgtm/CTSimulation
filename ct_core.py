@@ -289,21 +289,20 @@ def _set_material(gvxr, label: str, o: ObjectCfg):
 
 
 def demo_objects() -> list[ObjectCfg]:
-    """Return a watertight water block and an off-axis aluminium ball."""
+    """gVXR's sample dragon (water) plus an aluminium ball off the axis."""
     import trimesh
+    from gvxrPython3 import gvxr  # import only, no context needed
 
-    block = os.path.join(tempfile.gettempdir(), "demo_water_block.stl")
+    dragon = os.path.join(os.path.dirname(gvxr.__file__), "welsh-dragon-small.stl")
     ball = os.path.join(tempfile.gettempdir(), "demo_ball.stl")
     ball_radius_mm = 12.0
-    block_extents_mm = (60.0, 40.0, 30.0)
-    if not os.path.exists(block):
-        trimesh.creation.box(extents=block_extents_mm).export(block)
-    ball_offset_y_mm = float(block_extents_mm[1] / 2.0 + ball_radius_mm + 5.0)
+    dragon_mesh = trimesh.load(dragon, force="mesh", process=False)
+    ball_offset_y_mm = float(dragon_mesh.extents[1] / 2.0 + ball_radius_mm + 5.0)
     if not os.path.exists(ball):
         trimesh.creation.icosphere(subdivisions=3, radius=ball_radius_mm).export(ball)
     return [
-        ObjectCfg("Water block", block, "Compound", "H2O", 1.0, (0, 0, 0)),
-        ObjectCfg("Aluminium ball", ball, "Element", "Al", 2.70, (0, ball_offset_y_mm, 0)),
+        ObjectCfg("Dragon", dragon, "Compound", "H2O", 1.0, (0, 0, 0)),
+        ObjectCfg("Ball", ball, "Element", "Al", 2.70, (0, ball_offset_y_mm, 0)),
     ]
 
 
