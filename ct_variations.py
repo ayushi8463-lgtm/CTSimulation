@@ -330,12 +330,13 @@ def _acquire(cfg, cb):
 
 
 def generate(base_cfg, base_fx, params, out_root, mode="ofat", baseline=True,
-             clean_copy=True, progress=None, on_dataset=None):
+             clean_copy=True, progress=None, on_dataset=None, resume=False):
     """Create every dataset of the plan under out_root and bundle them in one zip.
 
     gVXR runs once per distinct physical setup; the effect variants (clean, realistic,
     different noise levels, ...) are fast post-processing of the same ideal projections.
-    Returns dict(rows, manifest, zip).
+    When resume=True, complete samples with matching scan and effect settings are
+    reused. Returns dict(rows, manifest, zip).
     """
     import tifffile                                           # noqa: F401 (checked early)
     import h5py
@@ -353,30 +354,107 @@ def generate(base_cfg, base_fx, params, out_root, mode="ofat", baseline=True,
         run["ids"] = list(range(next_id, next_id + len(run["variants"])))
         next_id += len(run["variants"])
 
+    manifest_path = os.path.join(out_root, "manifest.csv")
+    previous_rows = {}
+    if resume and os.path.isfile(manifest_path):
+        with open(manifest_path, newline="") as f:
+            for row in csv.DictReader(f):
+                try:
+                    previous_rows[int(row["id"])] = row
+                except (KeyError, TypeError, ValueError):
+                    continue
+
     rows = []
     schema_meta = {"schema_version":"1.0","format":"one HDF5 file per sample",
                    "projection_layout":"(angle, y, x)","projection_units":"dimensionless attenuation -ln(I/I0)",
                    "raw_units":"detector counts","flat_frames_default":1}
-    splits = {"train":[],"validation":[],"test":[]}
+    def save_manifest(current_rows):
+        temporary = manifest_path + ".tmp"
+        fields = list(current_rows[0].keys()) if current_rows else [
+            "id", "file", "folder", "variation", "effects", "noise_seed"]
+        with open(temporary, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(current_rows)
+        os.replace(temporary, manifest_path)
+
+    def make_row(ds_id, run, variant, cfg, fx, sample_path):
+        return {
+            "id": ds_id, "file": os.path.basename(sample_path),
+            "folder": f"ds{ds_id:03d}_{_safe(run['name'])}_{variant}",
+            "variation": run["name"], "effects": variant,
+            "changed": json.dumps(run["changed"]),
+            "beam": cfg.beam,
+            "spectrum": "polychromatic" if cfg.spectrum else f"mono {cfg.energy_kev} keV",
+            "photons_noise": fx.photons or cfg.photons, "noise_seed": int(fx.seed),
+            "flat_frames": int(fx.flat_frames),
+            "SOD_cm": cfg.source_x_cm, "det_cm": cfg.detector_x_cm,
+            "n_angles": cfg.n_angles, "nx": cfg.nx, "ny": cfg.ny,
+            "pixel_mm": cfg.pixel_mm,
+            "objects": ";".join(f"{o.name}:{o.material}@{o.density}" for o in cfg.objects),
+            **{f"fx_{k}": v for k, v in asdict(fx).items()},
+        }
+
+    def completed_sample(ds_id, run, variant, cfg, fx, sample_path):
+        old_row = previous_rows.get(ds_id)
+        expected_folder = f"ds{ds_id:03d}_{_safe(run['name'])}_{variant}"
+        if (not resume or old_row is None or old_row.get("folder") != expected_folder
+                or old_row.get("file") != os.path.basename(sample_path)
+                or not os.path.isfile(sample_path)):
+            return None
+        try:
+            with h5py.File(sample_path, "r") as h:
+                if int(h.attrs["sample_id"]) != ds_id:
+                    return None
+                saved_cfg = json.loads(h.attrs["scan_config_json"])
+                saved_fx = json.loads(h.attrs["effects_json"])
+                if saved_cfg != json.loads(json.dumps(asdict(cfg), default=str)):
+                    return None
+                if saved_fx != json.loads(json.dumps(asdict(fx), default=str)):
+                    return None
+                required = (
+                    "projection/attenuation", "projection/raw_counts",
+                    "detector/flat_counts", "ground_truth/labels",
+                    "ground_truth/attenuation_cm_inv", "angles_deg",
+                )
+                if any(name not in h for name in required):
+                    return None
+        except (OSError, KeyError, TypeError, ValueError):
+            return None
+        return old_row
+
     for g, runs in enumerate(groups.values()):
         cfg = runs[0]["cfg"]
         label = ", ".join(runs[0]["changed"].keys()) or "base scan"
+
+        pending = []
+        for run in runs:
+            for (variant, fx), ds_id in zip(run["variants"], run["ids"]):
+                sample_seed = (int(base_fx.seed) + 1_000_003 * (ds_id + 1)) % (2**32)
+                fx = replace(fx, seed=sample_seed)
+                sample_path = os.path.join(out_root, f"sample_{ds_id:05d}.h5")
+                old_row = completed_sample(ds_id, run, variant, cfg, fx, sample_path)
+                if old_row is not None:
+                    rows.append(old_row)
+                    progress((g + 0.85) / max(G, 1),
+                             f"Dataset {ds_id + 1} already complete; skipping.")
+                else:
+                    pending.append((run, variant, fx, ds_id, sample_path))
+
+        if not pending:
+            continue
 
         def cb(frac, g=g, label=label):
             progress((g + 0.85 * frac) / G, f"Simulating scan {g + 1}/{G} ({label}) ...")
 
         raw, flat = _acquire(cfg, cb)
-
-        for run in runs:
-            for (variant, fx), ds_id in zip(run["variants"], run["ids"]):
-                progress((g + 0.85) / G, f"Saving dataset {ds_id + 1} ({run['name']}, {variant}) ...")
-                sample_seed = (int(base_fx.seed) + 1_000_003 * (ds_id + 1)) % (2**32)
-                fx = replace(fx, seed=sample_seed)
-                atten, P, F = apply_effects(raw, flat, cfg.photons, fx)
-                folder = f"ds{ds_id:03d}_{_safe(run['name'])}_{variant}"
-                sample_path=os.path.join(out_root, f"sample_{ds_id:05d}.h5")
-                labels, mu, gt_meta = core.ground_truth_volumes(cfg)
-                with h5py.File(sample_path,"w") as h:
+        labels, mu, gt_meta = core.ground_truth_volumes(cfg)
+        for run, variant, fx, ds_id, sample_path in pending:
+            progress((g + 0.85) / max(G, 1), f"Saving dataset {ds_id + 1} ({run['name']}, {variant}) ...")
+            atten, P, F = apply_effects(raw, flat, cfg.photons, fx)
+            temporary_path = sample_path + ".tmp"
+            try:
+                with h5py.File(temporary_path, "w") as h:
                     h.attrs["sample_id"]=ds_id
                     h.attrs["scan_config_json"]=json.dumps(asdict(cfg),default=str)
                     h.attrs["effects_json"]=json.dumps(asdict(fx),default=str)
@@ -387,40 +465,21 @@ def generate(base_cfg, base_fx, params, out_root, mode="ofat", baseline=True,
                     h.create_dataset("ground_truth/labels",data=labels,chunks=True,compression="gzip",compression_opts=4,shuffle=True)
                     h.create_dataset("ground_truth/attenuation_cm_inv",data=mu,chunks=True,compression="gzip",compression_opts=4,shuffle=True)
                     h.create_dataset("angles_deg",data=core.angles(cfg).astype(np.float32))
-                row = {
-                    "id": ds_id, "file": os.path.basename(sample_path), "folder": folder, "variation": run["name"],
-                    "effects": variant,
-                    "changed": json.dumps(run["changed"]),
-                    "beam": cfg.beam,
-                    "spectrum": "polychromatic" if cfg.spectrum else f"mono {cfg.energy_kev} keV",
-                    "photons_noise": fx.photons or cfg.photons, "noise_seed": int(fx.seed),
-                    "flat_frames": int(fx.flat_frames),
-                    "SOD_cm": cfg.source_x_cm, "det_cm": cfg.detector_x_cm,
-                    "n_angles": cfg.n_angles, "nx": cfg.nx, "ny": cfg.ny, "pixel_mm": cfg.pixel_mm,
-                    "objects": ";".join(f"{o.name}:{o.material}@{o.density}" for o in cfg.objects),
-                    **{f"fx_{k}": v for k, v in asdict(fx).items()},
-                }
-                rows.append(row)
-                # Save progress after each sample so interrupted runs can resume.
-                manifest_path=os.path.join(out_root,"manifest.csv")
-                with open(manifest_path,"w",newline="") as mf:
-                    fields=list(rows[0].keys())
-                    writer=csv.DictWriter(mf,fieldnames=fields)
-                    writer.writeheader(); writer.writerows(rows)
-                split = ("test" if ds_id % 10 == 0 else "validation" if ds_id % 10 == 1 else "train")
-                splits[split].append(os.path.basename(sample_path))
-                if on_dataset:
-                    on_dataset(row, atten)
+                os.replace(temporary_path, sample_path)
+            finally:
+                if os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+            row = make_row(ds_id, run, variant, cfg, fx, sample_path)
+            rows.append(row)
+            rows.sort(key=lambda item: int(item["id"]))
+            save_manifest(rows)
+            if on_dataset:
+                on_dataset(row, atten)
         del raw, flat
-    rows.sort(key=lambda r: r["id"])
+    rows.sort(key=lambda r: int(r["id"]))
 
     progress(0.97, "Writing manifest and zip ...")
-    manifest = os.path.join(out_root, "manifest.csv")
-    with open(manifest, "w", newline="") as f:
-        fields=list(rows[0].keys()) if rows else ["id","file","variation","effects","noise_seed"]
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(rows)
+    save_manifest(rows)
 
     splits = {"train":[],"validation":[],"test":[]}
     for row in rows:
@@ -432,11 +491,13 @@ def generate(base_cfg, base_fx, params, out_root, mode="ofat", baseline=True,
     with open(os.path.join(out_root,"README.md"),"w") as f:
         f.write("# Synthetic CT dataset\n\nOne `sample_*.h5` file per sample. Each file contains `projection/attenuation`, `projection/raw_counts`, `detector/flat_counts`, `ground_truth/labels`, `ground_truth/attenuation_cm_inv`, and `angles_deg`. Ground truth uses isotropic object-space voxels; label 0 is background. `manifest.csv` indexes samples, `metadata.json` describes the schema, and `splits.json` gives deterministic train/validation/test membership.\n")
     zip_path = os.path.join(out_root, "datasets.zip")
+    expected_files = {row["file"] for row in rows}
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
         for root, _, files in os.walk(out_root):
             for fn in files:
-                if fn == "datasets.zip":
+                if fn == "datasets.zip" or (fn.startswith("sample_") and fn.endswith(".h5")
+                                              and fn not in expected_files):
                     continue
                 p = os.path.join(root, fn)
                 z.write(p, arcname=os.path.relpath(p, out_root))
-    return dict(rows=rows, manifest=manifest, zip=zip_path)
+    return dict(rows=rows, manifest=manifest_path, zip=zip_path)

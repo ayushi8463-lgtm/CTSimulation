@@ -21,7 +21,7 @@ def main(config_path):
         params={"n":int(sampling["n"]),"ranges":sampling["ranges"],"seed":int(sampling.get("seed",0))}
         plans=var.plan_runs(cfg,fx,params,"random",baseline=bool(sampling.get("baseline",False)))
         for plan in plans:
-        # Pass each sampled setting as a single-value OFAT run.
+            # Pass each sampled setting as a single-value OFAT run.
             sampled_cfg=cfg; sampled_fx=fx
             for key,val in plan["changed"].items():
                 if var.is_fx_key(key): sampled_fx=var.replace(sampled_fx,**{key[3:]:val})
@@ -29,8 +29,6 @@ def main(config_path):
             out_root=cfgd.get("output","dataset")
             if not os.path.isabs(out_root): out_root=os.path.join(cfg_dir,out_root)
             folder=os.path.join(out_root,plan["name"])
-            if os.path.exists(os.path.join(folder,"sample_00000.h5")):
-                print("resume: already complete",plan["name"]); continue
             var.generate(sampled_cfg,sampled_fx,[],folder,mode="ofat",baseline=True,resume=True,progress=lambda p,m:print(f"{p:.0%} {m}"))
     else:
         params=var.parse_sweep(sampling.get("params",[]),cfg,fx)
