@@ -323,6 +323,47 @@ def _load_mesh(path: str):
     return mesh
 
 
+def configuration_warnings(cfg: ScanCfg) -> list[str]:
+    """Describe open meshes and parts whose bounds indicate a possible overlap."""
+    scale = {"mm": 1.0, "cm": 10.0, "m": 1000.0,
+             "um": 0.001, "µm": 0.001}.get(str(cfg.stl_unit).lower())
+    if scale is None:
+        return []
+
+    warnings = []
+    bounds = []
+    for obj in cfg.objects:
+        mesh = _load_mesh(obj.stl_path)
+        if not mesh.is_watertight:
+            warnings.append(
+                f"{obj.name} is an open mesh. The projection will still run; "
+                "ground-truth voxels will use the current approximate surface-fill method."
+            )
+        mesh.apply_scale(scale)
+        rx, ry, rz = (float(x or 0) for x in obj.rotate_deg)
+        pivot = mesh.bounds.mean(axis=0) if cfg.center_each else (0.0, 0.0, 0.0)
+        from trimesh.transformations import rotation_matrix
+        for deg, axis in ((rx, (1, 0, 0)), (ry, (0, 1, 0)), (rz, (0, 0, 1))):
+            if deg:
+                mesh.apply_transform(rotation_matrix(np.deg2rad(deg), axis, pivot))
+        if cfg.center_each:
+            mesh.apply_translation(-mesh.bounds.mean(axis=0))
+        mesh.apply_translation(np.asarray(obj.offset_mm, dtype=float))
+        bounds.append(mesh.bounds)
+
+    for i, first in enumerate(cfg.objects):
+        for j in range(i + 1, len(cfg.objects)):
+            second = cfg.objects[j]
+            overlap = np.minimum(bounds[i][1], bounds[j][1]) - np.maximum(bounds[i][0], bounds[j][0])
+            if np.all(overlap > 0):
+                warnings.append(
+                    f"{first.name} and {second.name} have intersecting bounding boxes, "
+                    "so the parts may overlap. The scan will still run; where their "
+                    "ground-truth voxels overlap, the later part takes precedence."
+                )
+    return warnings
+
+
 def oriented_stl(o: ObjectCfg, center_each: bool, tmp_dir: str, index: int = 0) -> str:
     """Return an STL path for gVXR, converting other formats and applying rotation.
 

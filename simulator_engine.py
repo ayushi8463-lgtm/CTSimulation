@@ -130,17 +130,25 @@ def prepare(mode, form, uploads):
         mode = "scan"
     cfg, angle, fx = make_scan_config(form, uploads)
     batch = _parse_batch(form, cfg, fx) if mode == "batch" else None
-    return {"mode": mode, "cfg": cfg, "angle": angle, "fx": fx, "batch": batch}
+    mesh_warnings = core.configuration_warnings(cfg)
+    return {"mode": mode, "cfg": cfg, "angle": angle, "fx": fx,
+            "batch": batch, "mesh_warnings": mesh_warnings}
 
 
 def execute(prepared, report_progress):
     mode, cfg, angle, fx = (prepared[k] for k in ("mode", "cfg", "angle", "fx"))
+    def add_warnings(message):
+        notes = prepared.get("mesh_warnings", [])
+        if not notes:
+            return message
+        return message + "\n\nWarnings:\n" + "\n".join(f"⚠ {note}" for note in notes)
+
     if mode == "batch":
         batch = prepared["batch"]
         out_root = tempfile.mkdtemp(prefix="ctbatch_")
         thumbs, reference = {}, {}
         def progress(value, message):
-            report_progress(min(max(value, 0.0), 0.99), message)
+            report_progress(min(max(value, 0.0), 0.99), add_warnings(message))
         def on_dataset(row, atten):
             if "hi" not in reference:
                 reference["hi"] = max(float(np.percentile(atten[0], 99.5)), 1e-6)
@@ -151,24 +159,26 @@ def execute(prepared, report_progress):
                               progress=progress, on_dataset=on_dataset)
         rows = [{k: row[k] for k in ("id", "folder", "variation", "effects")}
                 for row in result["rows"]]
-        report_progress(1.0, f"Done: {len(rows)} datasets generated. Download them as one zip (includes manifest.csv).")
+        message = add_warnings(
+            f"Done: {len(rows)} datasets generated. Download them as one zip (includes manifest.csv).")
+        report_progress(1.0, message)
         return {"kind": "batch", "n": 0, "batch_dir": out_root,
-                "message": f"Done: {len(rows)} datasets generated. Download them as one zip (includes manifest.csv).",
+                "message": message,
                 "batch_rows": rows, "thumbs": thumbs, "batch_zip": result["zip"],
                 "manifest": result["manifest"]}
 
     if mode == "single":
-        report_progress(0.1, "Building scene...")
+        report_progress(0.1, add_warnings("Building scene..."))
         raw, flat = core.on_gl_thread(core.single_projection, cfg, angle)
         att, _, _ = var.apply_effects(raw, flat, cfg.photons, fx)
-        message = f"Single projection at {angle:.1f} deg done."
+        message = add_warnings(f"Single projection at {angle:.1f} deg done.")
         report_progress(1.0, message)
         return {"kind": mode, "n": 0, "message": message,
                 "images": {"proj": to_png(to_uint8(att))}}
 
     n = int(cfg.n_angles)
     step = cfg.total_deg / n
-    report_progress(0.02, "Building scene...")
+    report_progress(0.02, add_warnings("Building scene..."))
     flat = core.on_gl_thread(core.build_scene, cfg)
     block = max(1, n // 20)
     chunks, done = [], 0
@@ -185,7 +195,8 @@ def execute(prepared, report_progress):
     zip_path = core.save_dataset(cfg, att, counts, flat_counts,
                                  dark_level=fx.dark_offset, effects=asdict(fx))
     sino_zip = core.save_sinogram_dataset(cfg, att)
-    message = f"Done: {n} projections of {cfg.nx}x{cfg.ny}, {cfg.total_deg:.0f} deg scan."
+    message = add_warnings(
+        f"Done: {n} projections of {cfg.nx}x{cfg.ny}, {cfg.total_deg:.0f} deg scan.")
     report_progress(1.0, message)
     return {"kind": mode, "n": n, "total_deg": cfg.total_deg, "message": message,
             "att": att, "zip": zip_path, "sino_zip": sino_zip,

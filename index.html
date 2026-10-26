@@ -39,6 +39,7 @@
   #bar > div { height:100%; width:0; background:var(--accent); transition:width .25s; }
   #status { font-size:14px; color:var(--muted); min-height:20px; }
   #status.error { color:var(--bad); font-weight:600; white-space:pre-wrap; }
+  #status.warning { color:var(--warn); font-weight:600; white-space:pre-wrap; }
   .tabs { display:flex; gap:6px; margin:12px 0 8px; }
   .tabs button.on { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
   .pane { display:none; } .pane.on { display:block; }
@@ -265,7 +266,8 @@ function setBusy(busy) {
   genBusy = busy; refreshGenBtn();
 }
 function setStatus(msg, isError) {
-  const s = $("#status"); s.textContent = msg; s.className = isError ? "error" : "";
+  const s = $("#status"); s.textContent = msg;
+  s.className = isError ? "error" : msg.includes("Warnings:") ? "warning" : "";
 }
 function setBar(p) { $("#bar > div").style.width = Math.round(p * 100) + "%"; }
 function setResultImage(img, url, label) {
