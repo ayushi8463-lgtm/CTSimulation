@@ -141,7 +141,7 @@ def execute(prepared, report_progress):
         notes = prepared.get("mesh_warnings", [])
         if not notes:
             return message
-        return message + "\n\nWarnings:\n" + "\n".join(f"⚠ {note}" for note in notes)
+        return message + "\n\nWarnings:\n" + "\n".join(f" {note}" for note in notes)
 
     if mode == "batch":
         batch = prepared["batch"]
